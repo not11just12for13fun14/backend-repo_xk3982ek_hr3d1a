@@ -51,35 +51,20 @@ class CommentCreate(BaseModel):
 
 
 @app.on_event("startup")
-def seed_sample_posts_on_empty():
-    # Best-effort initial seed if empty
+def seed_if_empty_on_startup():
+    # If database is connected and there are no posts, run reseed to provide full sample content
     try:
         if db is None:
             return
         if db["post"].count_documents({}) == 0:
-            now = datetime.now(timezone.utc)
-            samples = [
-                {
-                    "title": "AI Daily Standup Summarizer",
-                    "description": "Bot that auto-joins standups, transcribes, and posts bullet summaries to Slack with action items.",
-                    "url": "https://example.com/standup-summarizer",
-                    "votes_count": 12,
-                    "comments_count": 0,
-                    "created_at": now - timedelta(days=2, hours=3),
-                    "updated_at": now - timedelta(days=1, hours=2),
-                },
-                {
-                    "title": "Vibe UI Presets",
-                    "description": "One-click Tailwind themes (gradients, glass, morph) for rapid prototyping. Copy/paste components.",
-                    "url": "https://example.com/vibe-ui",
-                    "votes_count": 20,
-                    "comments_count": 0,
-                    "created_at": now - timedelta(days=1, hours=5),
-                    "updated_at": now - timedelta(hours=10),
-                },
-            ]
-            db["post"].insert_many(samples)
+            # call reseed to insert full sample set (posts, comments, votes)
+            try:
+                reseed()  # type: ignore
+            except HTTPException:
+                # if reseed raises because db not configured, just return silently
+                pass
     except Exception:
+        # best-effort only
         pass
 
 
