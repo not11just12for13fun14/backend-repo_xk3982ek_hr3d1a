@@ -2,7 +2,7 @@ import os
 from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import List, Optional, Literal
+from typing import Optional, Literal
 from bson import ObjectId
 from datetime import datetime, timedelta, timezone
 
@@ -47,6 +47,58 @@ class PostCreate(BaseModel):
 class CommentCreate(BaseModel):
     author: Optional[str] = Field(None, max_length=80)
     content: str = Field(..., min_length=1, max_length=1000)
+
+
+@app.on_event("startup")
+def seed_sample_posts():
+    # Seed some example ideas if the collection is empty
+    try:
+        if db is None:
+            return
+        if db["post"].count_documents({}) == 0:
+            now = datetime.now(timezone.utc)
+            samples = [
+                {
+                    "title": "AI Daily Standup Summarizer",
+                    "description": "Bot that auto-joins standups, transcribes, and posts bullet summaries to Slack with action items.",
+                    "url": "https://example.com/standup-summarizer",
+                    "votes_count": 12,
+                    "comments_count": 3,
+                    "created_at": now - timedelta(days=2, hours=3),
+                    "updated_at": now - timedelta(days=1, hours=2),
+                },
+                {
+                    "title": "Vibe UI Presets",
+                    "description": "One-click Tailwind themes (gradients, glass, morph) for rapid prototyping. Copy/paste components.",
+                    "url": "https://example.com/vibe-ui",
+                    "votes_count": 20,
+                    "comments_count": 5,
+                    "created_at": now - timedelta(days=1, hours=5),
+                    "updated_at": now - timedelta(hours=10),
+                },
+                {
+                    "title": "Prompt-to-Plugin",
+                    "description": "Describe a plugin in plain English, get a working scaffold with frontend + FastAPI backend in minutes.",
+                    "url": None,
+                    "votes_count": 8,
+                    "comments_count": 1,
+                    "created_at": now - timedelta(days=6),
+                    "updated_at": now - timedelta(days=5, hours=8),
+                },
+                {
+                    "title": "Open Source Roadmap Radar",
+                    "description": "Track trending OSS issues/PRs, cluster by topic, and suggest good-first-issues personalized to you.",
+                    "url": "https://example.com/oss-radar",
+                    "votes_count": 15,
+                    "comments_count": 4,
+                    "created_at": now - timedelta(days=3, hours=6),
+                    "updated_at": now - timedelta(days=2),
+                },
+            ]
+            db["post"].insert_many(samples)
+    except Exception:
+        # Best-effort: don't block app startup if seeding fails
+        pass
 
 
 @app.get("/")
