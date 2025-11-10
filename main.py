@@ -2,11 +2,11 @@ import os
 from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import Optional, Literal
+from typing import Optional, Literal, List, Dict
 from bson import ObjectId
 from datetime import datetime, timedelta, timezone
 
-from database import db, create_document, get_documents
+from database import db
 
 app = FastAPI(title="VibeHunt API")
 
@@ -47,11 +47,12 @@ class PostCreate(BaseModel):
 class CommentCreate(BaseModel):
     author: Optional[str] = Field(None, max_length=80)
     content: str = Field(..., min_length=1, max_length=1000)
+    parent_id: Optional[str] = Field(None, description="Optional parent comment id for threading")
 
 
 @app.on_event("startup")
-def seed_sample_posts():
-    # Seed some example ideas if the collection is empty
+def seed_sample_posts_on_empty():
+    # Best-effort initial seed if empty
     try:
         if db is None:
             return
@@ -63,7 +64,7 @@ def seed_sample_posts():
                     "description": "Bot that auto-joins standups, transcribes, and posts bullet summaries to Slack with action items.",
                     "url": "https://example.com/standup-summarizer",
                     "votes_count": 12,
-                    "comments_count": 3,
+                    "comments_count": 0,
                     "created_at": now - timedelta(days=2, hours=3),
                     "updated_at": now - timedelta(days=1, hours=2),
                 },
@@ -72,32 +73,13 @@ def seed_sample_posts():
                     "description": "One-click Tailwind themes (gradients, glass, morph) for rapid prototyping. Copy/paste components.",
                     "url": "https://example.com/vibe-ui",
                     "votes_count": 20,
-                    "comments_count": 5,
+                    "comments_count": 0,
                     "created_at": now - timedelta(days=1, hours=5),
                     "updated_at": now - timedelta(hours=10),
-                },
-                {
-                    "title": "Prompt-to-Plugin",
-                    "description": "Describe a plugin in plain English, get a working scaffold with frontend + FastAPI backend in minutes.",
-                    "url": None,
-                    "votes_count": 8,
-                    "comments_count": 1,
-                    "created_at": now - timedelta(days=6),
-                    "updated_at": now - timedelta(days=5, hours=8),
-                },
-                {
-                    "title": "Open Source Roadmap Radar",
-                    "description": "Track trending OSS issues/PRs, cluster by topic, and suggest good-first-issues personalized to you.",
-                    "url": "https://example.com/oss-radar",
-                    "votes_count": 15,
-                    "comments_count": 4,
-                    "created_at": now - timedelta(days=3, hours=6),
-                    "updated_at": now - timedelta(days=2),
                 },
             ]
             db["post"].insert_many(samples)
     except Exception:
-        # Best-effort: don't block app startup if seeding fails
         pass
 
 
@@ -172,7 +154,7 @@ def list_posts(
     if db is None:
         raise HTTPException(status_code=500, detail="Database not configured")
 
-    query = {}
+    query: Dict = {}
     now = datetime.now(timezone.utc)
     if time_range == "week":
         query["created_at"] = {"$gte": now - timedelta(days=7)}
@@ -199,6 +181,17 @@ def list_posts(
     for i in items:
         i["voted"] = bool(voted_map.get(i["id"]))
 
+    # Live compute comments_count from comment collection
+    if items:
+        ids = [i["id"] for i in items]
+        pipeline = [
+            {"$match": {"post_id": {"$in": ids}}},
+            {"$group": {"_id": "$post_id", "count": {"$sum": 1}}}
+        ]
+        counts = {d["_id"]: d["count"] for d in db["comment"].aggregate(pipeline)}
+        for i in items:
+            i["comments_count"] = int(counts.get(i["id"], 0))
+
     return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
@@ -212,6 +205,8 @@ def get_post(post_id: str, request: Request):
     item = serialize(doc)
     ip = request.client.host if request.client else "unknown"
     item["voted"] = db["vote"].find_one({"ip": ip, "post_id": post_id}) is not None
+    # Live comments_count
+    item["comments_count"] = db["comment"].count_documents({"post_id": post_id})
     return item
 
 
@@ -230,7 +225,7 @@ async def vote_post(post_id: str, request: Request):
     now = datetime.now(timezone.utc)
 
     if existing_vote:
-        # Unvote: remove vote and decrement
+        # Unvote
         db["vote"].delete_one({"_id": existing_vote["_id"]})
         db["post"].update_one({"_id": to_object_id(post_id)}, {"$inc": {"votes_count": -1}, "$set": {"updated_at": now}})
         status = "unvoted"
@@ -246,6 +241,8 @@ async def vote_post(post_id: str, request: Request):
     item = serialize(doc)
     item["voted"] = voted
     item["status"] = status
+    # Live comments_count
+    item["comments_count"] = db["comment"].count_documents({"post_id": post_id})
     return item
 
 
@@ -254,14 +251,23 @@ def add_comment(post_id: str, payload: CommentCreate):
     if db is None:
         raise HTTPException(status_code=500, detail="Database not configured")
 
+    parent_id = payload.parent_id
+    if parent_id:
+        # Validate parent exists and belongs to same post
+        parent = db["comment"].find_one({"_id": to_object_id(parent_id)})
+        if not parent or parent.get("post_id") != post_id:
+            raise HTTPException(status_code=400, detail="Invalid parent comment")
+
     comment = {
         "post_id": post_id,
         "author": payload.author,
         "content": payload.content,
+        "parent_id": parent_id,
         "created_at": datetime.now(timezone.utc),
     }
     db["comment"].insert_one(comment)
-    db["post"].update_one({"_id": to_object_id(post_id)}, {"$inc": {"comments_count": 1}, "$set": {"updated_at": datetime.now(timezone.utc)}})
+    # we no longer rely on stored comments_count for accuracy
+    db["post"].update_one({"_id": to_object_id(post_id)}, {"$set": {"updated_at": datetime.now(timezone.utc)}})
 
     return {"status": "ok"}
 
@@ -272,6 +278,141 @@ def list_comments(post_id: str):
         raise HTTPException(status_code=500, detail="Database not configured")
     cursor = db["comment"].find({"post_id": post_id}).sort([("created_at", -1)])
     return [serialize(d) for d in cursor]
+
+
+@app.post("/seed")
+def reseed():
+    """
+    Reseed the database content without dropping collections/schemas.
+    - Clears documents in post, comment, vote collections
+    - Inserts money-making vibe-coding ideas
+    - Adds threaded comments under the first two posts
+    """
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database not configured")
+
+    # Delete only documents, not collections or schema
+    for col in ("post", "comment", "vote"):
+        db[col].delete_many({})
+
+    now = datetime.now(timezone.utc)
+
+    posts = [
+        {
+            "title": "Micro-SaaS: Notion-to-SOP Generator",
+            "description": "Turn messy Notion pages into step-by-step SOPs with AI. Export to PDF, share links, and track views. $19/mo per workspace.",
+            "url": "https://vibehunt.dev/notion-sop",
+            "votes_count": 0,
+            "comments_count": 0,
+            "created_at": now - timedelta(days=1, hours=2),
+            "updated_at": now - timedelta(days=1, hours=2),
+        },
+        {
+            "title": "Cold DM Personalizer for X/LinkedIn",
+            "description": "Paste a lead list, get hyper-personalized DMs with tone presets. Auto A/B test openers. Pay per credit.",
+            "url": "https://vibehunt.dev/dm-personalizer",
+            "votes_count": 0,
+            "comments_count": 0,
+            "created_at": now - timedelta(hours=10),
+            "updated_at": now - timedelta(hours=10),
+        },
+        {
+            "title": "Churn Radar for Stripe",
+            "description": "Daily digest of at-risk users with suggested saves. One-click Playbooks via email and in-app. $49/mo.",
+            "url": "https://vibehunt.dev/churn-radar",
+            "votes_count": 0,
+            "comments_count": 0,
+            "created_at": now - timedelta(days=2),
+            "updated_at": now - timedelta(days=2),
+        },
+        {
+            "title": "Figma-to-React Glass UI Kit",
+            "description": "Import a Figma link and get production React components with Tailwind glassmorphism. $99 one-time, updates included.",
+            "url": "https://vibehunt.dev/glass-kit",
+            "votes_count": 0,
+            "comments_count": 0,
+            "created_at": now - timedelta(days=3),
+            "updated_at": now - timedelta(days=3),
+        },
+    ]
+
+    result = db["post"].insert_many(posts)
+    post_ids = result.inserted_ids
+    p1, p2 = str(post_ids[0]), str(post_ids[1])
+
+    # Threaded comments: root and replies
+    c1_id = db["comment"].insert_one({
+        "post_id": p1,
+        "author": "Maya",
+        "content": "This scratches a real itch. Consultants will pay. Bundle with templates.",
+        "parent_id": None,
+        "created_at": now - timedelta(hours=8),
+    }).inserted_id
+
+    db["comment"].insert_many([
+        {
+            "post_id": p1,
+            "author": "Leo",
+            "content": "+1. Add Chrome capture to auto-grab screenshots into steps.",
+            "parent_id": str(c1_id),
+            "created_at": now - timedelta(hours=7, minutes=20),
+        },
+        {
+            "post_id": p1,
+            "author": "Ava",
+            "content": "Pricing idea: $19 solo / $49 team. Bundle export branding.",
+            "parent_id": str(c1_id),
+            "created_at": now - timedelta(hours=6, minutes=45),
+        },
+    ])
+
+    c2_id = db["comment"].insert_one({
+        "post_id": p2,
+        "author": "Noah",
+        "content": "Cold DMs work when ultra-personalized. Needs live social proof + rotate angles.",
+        "parent_id": None,
+        "created_at": now - timedelta(hours=5),
+    }).inserted_id
+
+    db["comment"].insert_many([
+        {
+            "post_id": p2,
+            "author": "Zoe",
+            "content": "Let users import a CSV and detect company tech stack for better hooks.",
+            "parent_id": str(c2_id),
+            "created_at": now - timedelta(hours=4, minutes=30),
+        },
+        {
+            "post_id": p2,
+            "author": "Kai",
+            "content": "Offer a \"done-for-you\" upsell: $299 set up with copy review.",
+            "parent_id": str(c2_id),
+            "created_at": now - timedelta(hours=3, minutes=15),
+        },
+    ])
+
+    # Seed some votes to make the list interesting
+    votes = []
+    for ip_last in range(1, 8):
+        votes.append({"post_id": p1, "ip": f"10.0.0.{ip_last}", "created_at": now - timedelta(hours=ip_last)})
+    for ip_last in range(1, 5):
+        votes.append({"post_id": p2, "ip": f"10.0.1.{ip_last}", "created_at": now - timedelta(hours=ip_last)})
+    for ip_last in range(1, 3):
+        votes.append({"post_id": str(post_ids[2]), "ip": f"10.0.2.{ip_last}", "created_at": now - timedelta(hours=ip_last)})
+
+    if votes:
+        db["vote"].insert_many(votes)
+
+    # Update votes_count to match current vote docs
+    vote_counts = {}
+    for v in db["vote"].aggregate([
+        {"$group": {"_id": "$post_id", "count": {"$sum": 1}}}
+    ]):
+        vote_counts[v["_id"]] = v["count"]
+    for pid in [str(_id) for _id in post_ids]:
+        db["post"].update_one({"_id": to_object_id(pid)}, {"$set": {"votes_count": int(vote_counts.get(pid, 0)), "updated_at": datetime.now(timezone.utc)}})
+
+    return {"status": "ok", "posts": len(post_ids)}
 
 
 if __name__ == "__main__":
