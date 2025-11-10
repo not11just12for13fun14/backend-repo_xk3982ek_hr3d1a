@@ -1,9 +1,9 @@
 INFO:     Will watch for changes in these directories: ['/home/workspace']
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
-INFO:     Started reloader process [556] using StatReload
-INFO:     Started server process [558]
+INFO:     Started reloader process [602] using StatReload
+INFO:     Started server process [604]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
-INFO:     172.20.0.1:56902 - "HEAD / HTTP/1.1" 405 Method Not Allowed
-INFO:     172.20.0.1:56918 - "GET /api/posts?time_range=week&sort_by=votes HTTP/1.1" 200 OK
-INFO:     172.20.0.1:56926 - "GET /api/posts?time_range=week&sort_by=votes HTTP/1.1" 200 OK
+INFO:     172.20.0.1:48768 - "HEAD / HTTP/1.1" 405 Method Not Allowed
+INFO:     172.20.0.1:44430 - "GET /api/posts?time_range=week&sort_by=votes HTTP/1.1" 200 OK
+INFO:     172.20.0.1:44432 - "GET /api/posts?time_range=week&sort_by=votes HTTP/1.1" 200 OK
