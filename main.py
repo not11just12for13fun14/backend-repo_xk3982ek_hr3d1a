@@ -276,7 +276,7 @@ def add_comment(post_id: str, payload: CommentCreate):
 def list_comments(post_id: str):
     if db is None:
         raise HTTPException(status_code=500, detail="Database not configured")
-    cursor = db["comment"].find({"post_id": post_id}).sort([("created_at", -1)])
+    cursor = db["comment"].find({"post_id": post_id}).sort([( "created_at", -1)])
     return [serialize(d) for d in cursor]
 
 
@@ -333,6 +333,42 @@ def reseed():
             "comments_count": 0,
             "created_at": now - timedelta(days=3),
             "updated_at": now - timedelta(days=3),
+        },
+        {
+            "title": "Podcast to Blog Auto-Repurposer",
+            "description": "Upload audio → chapters, quotes, SEO blog, and newsletter draft. Integrations for Substack and Ghost. $29/mo.",
+            "url": "https://vibehunt.dev/pod-repurpose",
+            "votes_count": 0,
+            "comments_count": 0,
+            "created_at": now - timedelta(days=1, hours=8),
+            "updated_at": now - timedelta(days=1, hours=8),
+        },
+        {
+            "title": "Tweet-to-Carousel Maker",
+            "description": "Turn top tweets into swipeable LinkedIn/IG carousels with on-brand templates. Credit-based pricing.",
+            "url": "https://vibehunt.dev/carousel-maker",
+            "votes_count": 0,
+            "comments_count": 0,
+            "created_at": now - timedelta(hours=20),
+            "updated_at": now - timedelta(hours=20),
+        },
+        {
+            "title": "Affiliate Finder for Creators",
+            "description": "Paste your product URL, get a ranked list of creators likely to convert + outreach scripts. $39/mo.",
+            "url": "https://vibehunt.dev/affiliate-finder",
+            "votes_count": 0,
+            "comments_count": 0,
+            "created_at": now - timedelta(days=4),
+            "updated_at": now - timedelta(days=4),
+        },
+        {
+            "title": "Launch Page Optimizer",
+            "description": "Upload your landing page, get heatmap predictions and headline variants to boost CVR. $19/mo starter.",
+            "url": "https://vibehunt.dev/launch-optimizer",
+            "votes_count": 0,
+            "comments_count": 0,
+            "created_at": now - timedelta(days=2, hours=12),
+            "updated_at": now - timedelta(days=2, hours=12),
         },
     ]
 
