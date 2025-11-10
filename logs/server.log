@@ -1,11 +1,19 @@
 INFO:     Will watch for changes in these directories: ['/home/workspace']
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
-INFO:     Started reloader process [349] using StatReload
-INFO:     Started server process [351]
+INFO:     Started reloader process [457] using StatReload
+INFO:     Started server process [459]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
-INFO:     172.20.0.1:47566 - "HEAD / HTTP/1.1" 405 Method Not Allowed
-INFO:     172.20.0.1:42248 - "GET /api/posts?time_range=week&sort_by=votes HTTP/1.1" 200 OK
-INFO:     172.20.0.1:42248 - "GET /api/posts?time_range=week&sort_by=votes HTTP/1.1" 200 OK
-INFO:     172.20.0.1:42252 - "GET /api/posts?time_range=week&sort_by=votes HTTP/1.1" 200 OK
-INFO:     172.20.0.1:42258 - "GET /api/posts?time_range=week&sort_by=votes HTTP/1.1" 200 OK
+INFO:     172.20.0.1:36448 - "GET /api/posts?time_range=week&sort_by=votes HTTP/1.1" 200 OK
+INFO:     172.20.0.1:36456 - "GET /api/posts?time_range=week&sort_by=votes HTTP/1.1" 200 OK
+INFO:     172.20.0.1:36458 - "GET /api/posts?time_range=week&sort_by=votes HTTP/1.1" 200 OK
+INFO:     172.20.0.1:36438 - "GET /api/posts?time_range=week&sort_by=votes HTTP/1.1" 200 OK
+INFO:     172.20.0.1:36466 - "HEAD / HTTP/1.1" 405 Method Not Allowed
+INFO:     172.20.0.1:36458 - "GET /api/posts/demo-p2 HTTP/1.1" 200 OK
+INFO:     172.20.0.1:36458 - "GET /api/posts/demo-p2 HTTP/1.1" 200 OK
+INFO:     172.20.0.1:36458 - "GET /api/posts/demo-p2/comments HTTP/1.1" 200 OK
+INFO:     172.20.0.1:52156 - "GET /api/posts/demo-p2/comments HTTP/1.1" 200 OK
+INFO:     172.20.0.1:52162 - "OPTIONS /api/posts/demo-p2/comments HTTP/1.1" 200 OK
+INFO:     172.20.0.1:52162 - "POST /api/posts/demo-p2/comments HTTP/1.1" 503 Service Unavailable
+INFO:     172.20.0.1:37856 - "GET /api/posts?time_range=week&sort_by=votes HTTP/1.1" 200 OK
+INFO:     172.20.0.1:37868 - "GET /api/posts?time_range=week&sort_by=votes HTTP/1.1" 200 OK

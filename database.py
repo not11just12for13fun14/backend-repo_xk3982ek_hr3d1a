@@ -1,55 +1,83 @@
 """
 Database Helper Functions
 
-MongoDB helper functions ready to use in your backend code.
-Import and use these functions in your API endpoints for database operations.
+MongoDB helper functions with graceful fallback.
+- Primary: real MongoDB via DATABASE_URL + DATABASE_NAME
+- Fallback: Mongita (embedded MongoDB-compatible) so the app fully works without external DB
 """
 
-from pymongo import MongoClient
 from datetime import datetime, timezone
-import os
-from dotenv import load_dotenv
 from typing import Union
-from pydantic import BaseModel
+import os
 
-# Load environment variables from .env file
+from pydantic import BaseModel
+from dotenv import load_dotenv
+
+# Load environment variables from .env file (noop if not present)
 load_dotenv()
 
+# Try real MongoDB first
+_db = None
 _client = None
-db = None
+
+try:
+    from pymongo import MongoClient
+    from pymongo.errors import PyMongoError
+except Exception:  # pragma: no cover
+    MongoClient = None  # type: ignore
+    PyMongoError = Exception  # type: ignore
 
 database_url = os.getenv("DATABASE_URL")
 database_name = os.getenv("DATABASE_NAME")
 
-if database_url and database_name:
-    _client = MongoClient(database_url)
-    db = _client[database_name]
+if database_url and database_name and MongoClient is not None:
+    try:
+        _client = MongoClient(database_url, serverSelectionTimeoutMS=2000)
+        _client.admin.command("ping")  # ensure reachable now
+        _db = _client[database_name]
+    except PyMongoError:
+        _client = None
+        _db = None
 
-# Helper functions for common database operations
+# Fallback to Mongita (embedded) if real DB isn't configured/reachable
+if _db is None:
+    try:
+        from mongita import MongitaClientDisk  # type: ignore
+        _client = MongitaClientDisk()
+        _db = _client[database_name or "vibehunt_local"]
+    except Exception:
+        _client = None
+        _db = None
+
+# Export name expected by application
+
+db = _db
+
+
 def create_document(collection_name: str, data: Union[BaseModel, dict]):
-    """Insert a single document with timestamp"""
+    """Insert a single document with timestamps"""
     if db is None:
         raise Exception("Database not available. Check DATABASE_URL and DATABASE_NAME environment variables.")
 
-    # Convert Pydantic model to dict if needed
     if isinstance(data, BaseModel):
         data_dict = data.model_dump()
     else:
-        data_dict = data.copy()
+        data_dict = dict(data)
 
-    data_dict['created_at'] = datetime.now(timezone.utc)
-    data_dict['updated_at'] = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)
+    data_dict['created_at'] = now
+    data_dict['updated_at'] = now
 
     result = db[collection_name].insert_one(data_dict)
     return str(result.inserted_id)
 
-def get_documents(collection_name: str, filter_dict: dict = None, limit: int = None):
-    """Get documents from collection"""
+
+def get_documents(collection_name: str, filter_dict: dict | None = None, limit: int | None = None):
+    """Get documents from a collection"""
     if db is None:
         raise Exception("Database not available. Check DATABASE_URL and DATABASE_NAME environment variables.")
-    
+
     cursor = db[collection_name].find(filter_dict or {})
     if limit:
         cursor = cursor.limit(limit)
-    
     return list(cursor)
