@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 from database import db, create_document, get_documents
 
-app = FastAPI(title="Vibe Ideas API")
+app = FastAPI(title="VibeHunt API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -103,7 +103,7 @@ def seed_sample_posts():
 
 @app.get("/")
 def read_root():
-    return {"message": "Vibe Ideas API running"}
+    return {"message": "VibeHunt API running"}
 
 
 @app.get("/test")
@@ -163,6 +163,7 @@ def create_post(payload: PostCreate):
 
 @app.get("/api/posts")
 def list_posts(
+    request: Request,
     time_range: Literal["week", "month", "all"] = Query("week"),
     sort_by: Literal["votes", "comments", "recent"] = Query("votes"),
     page: int = Query(1, ge=1),
@@ -190,41 +191,62 @@ def list_posts(
     items = [serialize(d) for d in cursor]
     total = db["post"].count_documents(query)
 
+    # annotate with whether this IP has voted each item
+    ip = request.client.host if request.client else "unknown"
+    voted_map = {
+        v.get("post_id"): True for v in db["vote"].find({"ip": ip, "post_id": {"$in": [i["id"] for i in items]}})
+    }
+    for i in items:
+        i["voted"] = bool(voted_map.get(i["id"]))
+
     return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
 @app.get("/api/posts/{post_id}")
-def get_post(post_id: str):
+def get_post(post_id: str, request: Request):
     if db is None:
         raise HTTPException(status_code=500, detail="Database not configured")
     doc = db["post"].find_one({"_id": to_object_id(post_id)})
     if not doc:
         raise HTTPException(status_code=404, detail="Post not found")
-    return serialize(doc)
+    item = serialize(doc)
+    ip = request.client.host if request.client else "unknown"
+    item["voted"] = db["vote"].find_one({"ip": ip, "post_id": post_id}) is not None
+    return item
 
 
 @app.post("/api/posts/{post_id}/vote")
 async def vote_post(post_id: str, request: Request):
+    """
+    Toggle vote for this post by client IP. One vote per IP per post.
+    Returns the updated post and current voted state.
+    """
     if db is None:
         raise HTTPException(status_code=500, detail="Database not configured")
 
     ip = request.client.host if request.client else "unknown"
 
-    # Enforce: single IP can vote for one single post only
-    existing_vote = db["vote"].find_one({"ip": ip})
-    if existing_vote:
-        # If the existing vote is for this post, ignore; otherwise block
-        if str(existing_vote.get("post_id")) != post_id:
-            raise HTTPException(status_code=400, detail="This IP has already voted for another post")
-        else:
-            return {"status": "ok", "message": "Already voted for this post"}
+    existing_vote = db["vote"].find_one({"ip": ip, "post_id": post_id})
+    now = datetime.now(timezone.utc)
 
-    # Record vote and increment
-    db["vote"].insert_one({"post_id": post_id, "ip": ip, "created_at": datetime.now(timezone.utc)})
-    db["post"].update_one({"_id": to_object_id(post_id)}, {"$inc": {"votes_count": 1}, "$set": {"updated_at": datetime.now(timezone.utc)}})
+    if existing_vote:
+        # Unvote: remove vote and decrement
+        db["vote"].delete_one({"_id": existing_vote["_id"]})
+        db["post"].update_one({"_id": to_object_id(post_id)}, {"$inc": {"votes_count": -1}, "$set": {"updated_at": now}})
+        status = "unvoted"
+        voted = False
+    else:
+        # Cast vote
+        db["vote"].insert_one({"post_id": post_id, "ip": ip, "created_at": now})
+        db["post"].update_one({"_id": to_object_id(post_id)}, {"$inc": {"votes_count": 1}, "$set": {"updated_at": now}})
+        status = "voted"
+        voted = True
 
     doc = db["post"].find_one({"_id": to_object_id(post_id)})
-    return serialize(doc)
+    item = serialize(doc)
+    item["voted"] = voted
+    item["status"] = status
+    return item
 
 
 @app.post("/api/posts/{post_id}/comments")
