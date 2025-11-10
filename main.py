@@ -50,6 +50,96 @@ class CommentCreate(BaseModel):
     parent_id: Optional[str] = Field(None, description="Optional parent comment id for threading")
 
 
+# -------- Read-only soft fallback (when DB not configured) --------
+
+def _now_iso(offset_hours: int = 0):
+    return (datetime.now(timezone.utc) - timedelta(hours=offset_hours)).isoformat()
+
+SAMPLE_POSTS = [
+    {
+        "id": "demo-p1",
+        "title": "Micro-SaaS: Notion-to-SOP Generator",
+        "description": "Turn messy Notion pages into step-by-step SOPs with AI. Export to PDF, share links, and track views.",
+        "url": "https://vibehunt.dev/notion-sop",
+        "votes_count": 7,
+        "comments_count": 3,
+        "created_at": _now_iso(26),
+        "updated_at": _now_iso(26),
+        "voted": False,
+    },
+    {
+        "id": "demo-p2",
+        "title": "Cold DM Personalizer for X/LinkedIn",
+        "description": "Paste a lead list, get hyper-personalized DMs with tone presets. Auto A/B test openers.",
+        "url": "https://vibehunt.dev/dm-personalizer",
+        "votes_count": 4,
+        "comments_count": 3,
+        "created_at": _now_iso(10),
+        "updated_at": _now_iso(10),
+        "voted": False,
+    },
+]
+
+SAMPLE_COMMENTS = {
+    "demo-p1": [
+        {
+            "id": "demo-c1",
+            "post_id": "demo-p1",
+            "author": "Maya",
+            "content": "This scratches a real itch. Consultants will pay. Bundle with templates.",
+            "parent_id": None,
+            "created_at": _now_iso(8),
+        },
+        {
+            "id": "demo-c2",
+            "post_id": "demo-p1",
+            "author": "Leo",
+            "content": "+1. Add Chrome capture to auto-grab screenshots into steps.",
+            "parent_id": "demo-c1",
+            "created_at": _now_iso(7),
+        },
+        {
+            "id": "demo-c3",
+            "post_id": "demo-p1",
+            "author": "Ava",
+            "content": "Pricing idea: $19 solo / $49 team.",
+            "parent_id": "demo-c1",
+            "created_at": _now_iso(6),
+        },
+    ],
+    "demo-p2": [
+        {
+            "id": "demo-c4",
+            "post_id": "demo-p2",
+            "author": "Noah",
+            "content": "Cold DMs work when ultra-personalized. Rotate angles.",
+            "parent_id": None,
+            "created_at": _now_iso(5),
+        },
+        {
+            "id": "demo-c5",
+            "post_id": "demo-p2",
+            "author": "Zoe",
+            "content": "Let users import a CSV and detect tech stack for better hooks.",
+            "parent_id": "demo-c4",
+            "created_at": _now_iso(4),
+        },
+        {
+            "id": "demo-c6",
+            "post_id": "demo-p2",
+            "author": "Kai",
+            "content": "Offer a done-for-you upsell: $299 setup.",
+            "parent_id": "demo-c4",
+            "created_at": _now_iso(3),
+        },
+    ],
+}
+
+
+def db_available() -> bool:
+    return db is not None
+
+
 @app.on_event("startup")
 def seed_if_empty_on_startup():
     # If database is connected and there are no posts, run reseed to provide full sample content
@@ -57,11 +147,9 @@ def seed_if_empty_on_startup():
         if db is None:
             return
         if db["post"].count_documents({}) == 0:
-            # call reseed to insert full sample set (posts, comments, votes)
             try:
                 reseed()  # type: ignore
             except HTTPException:
-                # if reseed raises because db not configured, just return silently
                 pass
     except Exception:
         # best-effort only
@@ -113,8 +201,8 @@ def test_database():
 
 @app.post("/api/posts")
 def create_post(payload: PostCreate):
-    if db is None:
-        raise HTTPException(status_code=500, detail="Database not configured")
+    if not db_available():
+        raise HTTPException(status_code=503, detail="Database not configured; posting is temporarily disabled.")
     data = payload.model_dump()
     now = datetime.now(timezone.utc)
     data.update({
@@ -136,8 +224,11 @@ def list_posts(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=50),
 ):
-    if db is None:
-        raise HTTPException(status_code=500, detail="Database not configured")
+    if not db_available():
+        # Soft fallback: serve demo items so the UI works without setup
+        items = SAMPLE_POSTS.copy()
+        total = len(items)
+        return {"items": items, "total": total, "page": 1, "page_size": total}
 
     query: Dict = {}
     now = datetime.now(timezone.utc)
@@ -182,8 +273,12 @@ def list_posts(
 
 @app.get("/api/posts/{post_id}")
 def get_post(post_id: str, request: Request):
-    if db is None:
-        raise HTTPException(status_code=500, detail="Database not configured")
+    if not db_available():
+        item = next((p for p in SAMPLE_POSTS if p["id"] == post_id), None)
+        if not item:
+            raise HTTPException(status_code=404, detail="Post not found")
+        return item
+
     doc = db["post"].find_one({"_id": to_object_id(post_id)})
     if not doc:
         raise HTTPException(status_code=404, detail="Post not found")
@@ -201,8 +296,8 @@ async def vote_post(post_id: str, request: Request):
     Toggle vote for this post by client IP. One vote per IP per post.
     Returns the updated post and current voted state.
     """
-    if db is None:
-        raise HTTPException(status_code=500, detail="Database not configured")
+    if not db_available():
+        raise HTTPException(status_code=503, detail="Voting disabled in demo mode.")
 
     ip = request.client.host if request.client else "unknown"
 
@@ -233,8 +328,8 @@ async def vote_post(post_id: str, request: Request):
 
 @app.post("/api/posts/{post_id}/comments")
 def add_comment(post_id: str, payload: CommentCreate):
-    if db is None:
-        raise HTTPException(status_code=500, detail="Database not configured")
+    if not db_available():
+        raise HTTPException(status_code=503, detail="Comments disabled in demo mode.")
 
     parent_id = payload.parent_id
     if parent_id:
@@ -259,8 +354,8 @@ def add_comment(post_id: str, payload: CommentCreate):
 
 @app.get("/api/posts/{post_id}/comments")
 def list_comments(post_id: str):
-    if db is None:
-        raise HTTPException(status_code=500, detail="Database not configured")
+    if not db_available():
+        return SAMPLE_COMMENTS.get(post_id, [])
     cursor = db["comment"].find({"post_id": post_id}).sort([( "created_at", -1)])
     return [serialize(d) for d in cursor]
 
